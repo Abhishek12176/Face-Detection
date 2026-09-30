@@ -1,9 +1,27 @@
 {
-  "version": 2,
-  "functions": {
-    "api/predict.py": {
-      "memory": 1024,
-      "maxDuration": 15
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "app": {
+      "root": ".",
+      "framework": "nextjs"
+    },
+    "api": {
+      "root": "api",
+      "runtime": "python"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "app"
+      }
+    }
+  ]
 }
