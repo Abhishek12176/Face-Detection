@@ -395,6 +395,7 @@ export default function Home() {
               isProcessing={isBusyRef.current}
               detected={detected}
               userName={userName}
+              isMirrored={facingMode === "user"}
             />
 
             {/* Live Indicator Pills */}

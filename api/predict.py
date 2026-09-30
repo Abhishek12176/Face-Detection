@@ -231,10 +231,18 @@ class handler(BaseHTTPRequestHandler):
             if face_cascade is not None:
                 faces = face_cascade.detectMultiScale(
                     gray,
-                    scaleFactor=1.3,
+                    scaleFactor=1.25,
                     minNeighbors=5,
                     minSize=(30, 30)
                 )
+                # Sensitive second pass if lighting or angle was tricky
+                if len(faces) == 0:
+                    faces = face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.1,
+                        minNeighbors=3,
+                        minSize=(25, 25)
+                    )
 
             box_info = None
             face_detected = False
