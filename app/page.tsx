@@ -46,6 +46,7 @@ export default function Home() {
   const isBusyRef = useRef(false);
 
   // Core App State
+  const [userName, setUserName] = useState<string>("Abhishek");
   const [currentEmotion, setCurrentEmotion] = useState<string>("neutral");
   const [confidence, setConfidence] = useState<number>(0.92);
   const [detected, setDetected] = useState<boolean>(true);
@@ -223,7 +224,11 @@ export default function Home() {
 
       ctx.fillStyle = "#FFFFFF";
       ctx.font = "16px sans-serif";
-      ctx.fillText(`AI Emotion: ${theme.name.toUpperCase()} (${Math.round(confidence * 100)}%) | Meme Mood AI`, canvas.width / 2, canvas.height - 18);
+      ctx.fillText(
+        `AI Emotion: ${theme.name.toUpperCase()} (${Math.round(confidence * 100)}%) ${userName ? `| User: ${userName}` : ""} | MemeMood AI`,
+        canvas.width / 2,
+        canvas.height - 18
+      );
 
       const link = document.createElement("a");
       link.download = `meme-${currentEmotion}-${Date.now()}.png`;
@@ -266,6 +271,19 @@ export default function Home() {
 
         {/* Global Action Bar */}
         <div className="flex items-center flex-wrap gap-2.5">
+          {/* User Name input matching app.py */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 border border-white/10 text-xs shadow-md">
+            <span className="text-white/50 text-[11px] font-medium">👤</span>
+            <input
+              type="text"
+              value={userName}
+              onChange={(e) => setUserName(e.target.value)}
+              placeholder="Your name"
+              className="bg-transparent border-none outline-none text-yellow-300 font-bold w-24 sm:w-28 text-xs placeholder:text-white/30"
+              title="Enter your name"
+            />
+          </div>
+
           {/* Roast Mode Toggle */}
           <button
             onClick={() => {
@@ -376,6 +394,7 @@ export default function Home() {
               confidence={confidence}
               isProcessing={isBusyRef.current}
               detected={detected}
+              userName={userName}
             />
 
             {/* Live Indicator Pills */}

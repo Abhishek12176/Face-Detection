@@ -30,11 +30,10 @@ venv.bak/
 emotion_model.h5
 *.h5
 
-# IMPORTANT:
-# Keep 'api/emotion_model.tflite' tracked in Git so Vercel can load it during serverless deployment!
-# Ensure its size is < 50MB (convert_to_tflite.py automatically quantizes it).
+# Keep 'api/emotion_model.tflite' & 'api/emotion_weights.npz' tracked in Git for Vercel
 !api/emotion_model.tflite
 !emotion_model.tflite
+!api/emotion_weights.npz
 
 # OS & IDE
 .DS_Store

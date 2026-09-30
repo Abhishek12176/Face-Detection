@@ -14,48 +14,48 @@ import argparse
 
 def convert_h5_to_tflite(h5_path="emotion_model.h5", output_path="api/emotion_model.tflite"):
     print("=" * 60)
-    print("🚀 Face Emotion Model Converter (H5 -> TFLite)")
+    print("[*] Face Emotion Model Converter (H5 -> TFLite)")
     print("=" * 60)
 
     # 1. Check if source model exists
     if not os.path.exists(h5_path):
-        print(f"❌ Error: Model file '{h5_path}' nahi mila!")
-        print(f"👉 Please make sure '{h5_path}' is placed in the project root or provide path via --input.")
+        print(f"[ERROR] Model file '{h5_path}' not found!")
+        print(f"[*] Please make sure '{h5_path}' is placed in the project root or provide path via --input.")
         sys.exit(1)
 
     original_size_mb = os.path.getsize(h5_path) / (1024 * 1024)
-    print(f"📦 Found input model: {h5_path} ({original_size_mb:.2f} MB)")
+    print(f"[*] Found input model: {h5_path} ({original_size_mb:.2f} MB)")
 
     # 2. Check TensorFlow installation
     try:
         import tensorflow as tf
-        print(f"✅ TensorFlow version: {tf.__version__}")
+        print(f"[OK] TensorFlow version: {tf.__version__}")
     except ImportError:
-        print("❌ TensorFlow is not installed in your Python environment.")
-        print("👉 Run: pip install tensorflow")
+        print("[ERROR] TensorFlow is not installed in your Python environment.")
+        print("[*] Run: pip install tensorflow")
         sys.exit(1)
 
-    print("\n⏳ Loading Keras model...")
+    print("\n[*] Loading Keras model...")
     try:
         model = tf.keras.models.load_model(h5_path, compile=False)
-        print("✅ Keras model loaded successfully!")
+        print("[OK] Keras model loaded successfully!")
         print(f"   Input shape:  {model.input_shape}")
         print(f"   Output shape: {model.output_shape}")
     except Exception as e:
-        print(f"❌ Error loading model: {e}")
+        print(f"[ERROR] Error loading model: {e}")
         sys.exit(1)
 
     # 3. Convert with Optimization for Vercel Serverless (size reduction < 50MB)
-    print("\n⚡ Converting to TensorFlow Lite format with dynamic range quantization...")
+    print("\n[*] Converting to TensorFlow Lite format with dynamic range quantization...")
     try:
         converter = tf.lite.TFLiteConverter.from_keras_model(model)
         # Apply DEFAULT optimization (quantizes weights from float32 to int8)
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         
         tflite_model = converter.convert()
-        print("✅ Conversion completed!")
+        print("[OK] Conversion completed!")
     except Exception as e:
-        print(f"❌ Conversion failed: {e}")
+        print(f"[ERROR] Conversion failed: {e}")
         sys.exit(1)
 
     # 4. Save to target location
@@ -76,31 +76,30 @@ def convert_h5_to_tflite(h5_path="emotion_model.h5", output_path="api/emotion_mo
             f.write(tflite_model)
 
     print("\n" + "=" * 60)
-    print("🎉 CONVERSION SUMMARY")
+    print("CONVERSION SUMMARY")
     print("=" * 60)
-    print(f"📁 Output File:    {output_path}")
-    print(f"📦 Original Size:  {original_size_mb:.2f} MB")
-    print(f"⚡ TFLite Size:    {new_size_mb:.2f} MB")
-    print(f"📉 Size Reduction: {reduction:.1f}%")
+    print(f"Output File:    {output_path}")
+    print(f"Original Size:  {original_size_mb:.2f} MB")
+    print(f"TFLite Size:    {new_size_mb:.2f} MB")
+    print(f"Size Reduction: {reduction:.1f}%")
     
     if new_size_mb < 50:
-        print("✅ PERFECT! Model is well under Vercel's 50MB Serverless Function limit.")
+        print("[OK] Model is well under Vercel's 50MB Serverless Function limit.")
     else:
-        print("⚠️ Warning: Model is >= 50MB. Vercel free tier might reject functions > 50MB.")
-        print("   Consider additional pruning or float16 quantization.")
+        print("[WARNING] Model is >= 50MB. Vercel free tier might reject functions > 50MB.")
 
     # 5. Quick Verification
-    print("\n🔍 Verifying TFLite Interpreter...")
+    print("\n[*] Verifying TFLite Interpreter...")
     try:
         interpreter = tf.lite.Interpreter(model_content=tflite_model)
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
-        print(f"✅ Input Tensor:  Shape = {input_details[0]['shape']}, Type = {input_details[0]['dtype']}")
-        print(f"✅ Output Tensor: Shape = {output_details[0]['shape']}, Type = {output_details[0]['dtype']}")
-        print("\n✨ Ready for deployment! The model is saved at api/emotion_model.tflite")
+        print(f"[OK] Input Tensor:  Shape = {input_details[0]['shape']}, Type = {input_details[0]['dtype']}")
+        print(f"[OK] Output Tensor: Shape = {output_details[0]['shape']}, Type = {output_details[0]['dtype']}")
+        print("\nReady for deployment! The model is saved at api/emotion_model.tflite")
     except Exception as e:
-        print(f"⚠️ Verification warning: {e}")
+        print(f"[WARNING] Verification warning: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Keras .h5 emotion model to optimized .tflite")

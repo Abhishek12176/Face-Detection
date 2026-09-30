@@ -13,7 +13,10 @@ INPUT_DETAILS = None
 OUTPUT_DETAILS = None
 FACE_CASCADE = None
 
-EMOTIONS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+# Match exact ordering from original app.py:
+# ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
+EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+
 
 def init_libraries():
     """Lazily import OpenCV and TFLite runtime to optimize cold starts."""
@@ -62,6 +65,58 @@ def get_face_cascade():
                 pass
     return None
 
+NPZ_WEIGHTS = None
+
+def get_npz_weights():
+    """Load lightweight exact weights exported from emotion_model.h5."""
+    global NPZ_WEIGHTS
+    if NPZ_WEIGHTS is not None:
+        return NPZ_WEIGHTS
+    candidate_paths = [
+        os.path.join(os.path.dirname(__file__), "emotion_weights.npz"),
+        os.path.join(os.getcwd(), "api", "emotion_weights.npz"),
+        "api/emotion_weights.npz",
+        "emotion_weights.npz"
+    ]
+    for p in candidate_paths:
+        if os.path.exists(p):
+            try:
+                NPZ_WEIGHTS = np.load(p)
+                return NPZ_WEIGHTS
+            except Exception as e:
+                print(f"Warning loading NPZ weights: {e}")
+    return None
+
+def conv2d_valid(x, w, b):
+    H, W, C_in = x.shape
+    kH, kW, _, C_out = w.shape
+    out_H, out_W = H - kH + 1, W - kW + 1
+    shape = (out_H, out_W, kH, kW, C_in)
+    strides = (x.strides[0], x.strides[1], x.strides[0], x.strides[1], x.strides[2])
+    cols = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+    cols = cols.reshape(out_H * out_W, kH * kW * C_in)
+    w_flat = w.reshape(kH * kW * C_in, C_out)
+    out = np.dot(cols, w_flat) + b
+    return np.maximum(0, out.reshape(out_H, out_W, C_out))
+
+def maxpool2d(x):
+    H, W, C = x.shape
+    out_H, out_W = H // 2, W // 2
+    x_cropped = x[:out_H*2, :out_W*2, :]
+    return x_cropped.reshape(out_H, 2, out_W, 2, C).max(axis=(1, 3))
+
+def predict_npz(img48, weights):
+    """Run exact forward pass of the original emotion_model.h5 CNN in ~10ms pure NumPy."""
+    c1 = conv2d_valid(img48, weights['w_conv1'], weights['b_conv1'])
+    p1 = maxpool2d(c1)
+    c2 = conv2d_valid(p1, weights['w_conv2'], weights['b_conv2'])
+    p2 = maxpool2d(c2)
+    flat = p2.flatten()
+    d1 = np.maximum(0, np.dot(flat, weights['w_dense1']) + weights['b_dense1'])
+    logits = np.dot(d1, weights['w_dense2']) + weights['b_dense2']
+    e = np.exp(logits - np.max(logits))
+    return e / np.sum(e)
+
 def get_interpreter():
     """Load and cache the TFLite model interpreter."""
     global INTERPRETER, INPUT_DETAILS, OUTPUT_DETAILS
@@ -102,6 +157,7 @@ def get_interpreter():
         return None, None, None
 
 
+
 class handler(BaseHTTPRequestHandler):
     def _send_response(self, status_code, data):
         self.send_response(status_code)
@@ -120,11 +176,13 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Health check endpoint."""
         init_libraries()
+        npz_weights = get_npz_weights()
         interpreter, _, _ = get_interpreter()
         self._send_response(200, {
             "status": "healthy",
             "message": "Face Emotion Detection Serverless API is alive!",
-            "model_loaded": interpreter is not None,
+            "model_loaded": (npz_weights is not None) or (interpreter is not None),
+            "engine": "npz_cnn" if npz_weights is not None else ("tflite" if interpreter is not None else "demo"),
             "opencv_loaded": cv2 is not None
         })
 
@@ -162,16 +220,18 @@ class handler(BaseHTTPRequestHandler):
                 self._send_response(400, {"error": "Failed to decode image"})
                 return
 
+            # Preprocessing matching original app.py:
+            # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # faces = face_detect.detectMultiScale(gray, 1.3, 5)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             h, w = gray.shape
 
-            # Face Detection using Haar Cascade
             face_cascade = get_face_cascade()
             faces = []
             if face_cascade is not None:
                 faces = face_cascade.detectMultiScale(
                     gray,
-                    scaleFactor=1.15,
+                    scaleFactor=1.3,
                     minNeighbors=5,
                     minSize=(30, 30)
                 )
@@ -201,63 +261,62 @@ class handler(BaseHTTPRequestHandler):
                 face_roi = gray[sy:sy+min_dim, sx:sx+min_dim]
                 box_info = None
 
-            # Check if TFLite model is available
+            # 1. Primary Engine: Lightweight exact weights from emotion_model.h5
+            npz_weights = get_npz_weights()
             interpreter, input_details, output_details = get_interpreter()
 
-            if interpreter is None:
-                # Fallback Demo Mode if model hasn't been uploaded/converted yet
-                # Prevents frontend from crashing during initial preview
+            if npz_weights is not None:
+                # Exact preprocessing from app.py:
+                # face = cv2.resize(face, (48, 48))
+                # face = face / 255.0
+                # face = np.reshape(face, (1, 48, 48, 1))
+                resized = cv2.resize(face_roi, (48, 48), interpolation=cv2.INTER_AREA)
+                norm = (resized.astype(np.float32) / 255.0)[:, :, np.newaxis]
+                probabilities = predict_npz(norm, npz_weights)
+            elif interpreter is not None:
+                # TFLite Engine
+                expected_shape = input_details[0]['shape']
+                target_h = int(expected_shape[1]) if len(expected_shape) > 1 else 48
+                target_w = int(expected_shape[2]) if len(expected_shape) > 2 else 48
+                target_channels = int(expected_shape[3]) if len(expected_shape) > 3 else 1
+
+                resized = cv2.resize(face_roi, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                input_dtype = input_details[0]['dtype']
+                if target_channels == 1:
+                    input_tensor = np.expand_dims(resized, axis=-1)
+                else:
+                    input_tensor = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
+
+                if input_dtype == np.float32:
+                    input_tensor = input_tensor.astype(np.float32) / 255.0
+                else:
+                    input_tensor = input_tensor.astype(input_dtype)
+
+                input_tensor = np.expand_dims(input_tensor, axis=0)
+                interpreter.set_tensor(input_details[0]['index'], input_tensor)
+                interpreter.invoke()
+                raw_scores = interpreter.get_tensor(output_details[0]['index'])[0].astype(np.float64)
+                if np.sum(raw_scores) > 1.05 or np.min(raw_scores) < 0:
+                    e_x = np.exp(raw_scores - np.max(raw_scores))
+                    probabilities = e_x / np.sum(e_x)
+                else:
+                    probabilities = raw_scores
+            else:
+                # Fallback Demo Mode
                 self._send_response(200, {
                     "emotion": "neutral" if not face_detected else "happy",
                     "confidence": 0.95,
                     "detected": face_detected,
                     "box": box_info,
                     "demo_mode": True,
-                    "notice": "Model file 'api/emotion_model.tflite' not found. Running in demo mode. Run convert_to_tflite.py to enable real inference."
+                    "notice": "Model weights pending. Running in interactive demo mode."
                 })
                 return
-
-            # Preprocessing: resize to 48x48
-            expected_shape = input_details[0]['shape'] # usually [1, 48, 48, 1]
-            target_h = int(expected_shape[1]) if len(expected_shape) > 1 else 48
-            target_w = int(expected_shape[2]) if len(expected_shape) > 2 else 48
-            target_channels = int(expected_shape[3]) if len(expected_shape) > 3 else 1
-
-            resized = cv2.resize(face_roi, (target_w, target_h), interpolation=cv2.INTER_AREA)
-
-            # Normalization and channel adjustment
-            input_dtype = input_details[0]['dtype']
-            if target_channels == 1:
-                input_tensor = np.expand_dims(resized, axis=-1)
-            else:
-                input_tensor = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
-
-            if input_dtype == np.float32:
-                input_tensor = input_tensor.astype(np.float32) / 255.0
-            else:
-                input_tensor = input_tensor.astype(input_dtype)
-
-            # Add batch dimension: [1, H, W, C]
-            input_tensor = np.expand_dims(input_tensor, axis=0)
-
-            # Run inference
-            interpreter.set_tensor(input_details[0]['index'], input_tensor)
-            interpreter.invoke()
-            raw_scores = interpreter.get_tensor(output_details[0]['index'])[0]
-
-            # Convert to float and apply softmax if raw logits
-            scores = raw_scores.astype(np.float64)
-            if np.sum(scores) > 1.05 or np.min(scores) < 0:
-                e_x = np.exp(scores - np.max(scores))
-                probabilities = e_x / np.sum(e_x)
-            else:
-                probabilities = scores
 
             best_idx = int(np.argmax(probabilities))
             best_emotion = EMOTIONS[best_idx] if best_idx < len(EMOTIONS) else "neutral"
             best_confidence = float(probabilities[best_idx])
 
-            # Score dictionary for frontend telemetry
             all_scores = {
                 EMOTIONS[i]: round(float(probabilities[i]), 4)
                 for i in range(min(len(EMOTIONS), len(probabilities)))
@@ -281,12 +340,13 @@ class handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     from http.server import HTTPServer
     port = int(os.environ.get("PORT", 5328))
-    print(f"🚀 Starting local Python server at http://127.0.0.1:{port}")
-    print("👉 Send POST requests to http://127.0.0.1:5328/api/predict")
+    print(f"Starting local Python server at http://127.0.0.1:{port}")
+    print("Send POST requests to http://127.0.0.1:5328/api/predict")
     server = HTTPServer(("127.0.0.1", port), handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n🛑 Server stopped.")
+        print("\nServer stopped.")
         server.server_close()
+
 

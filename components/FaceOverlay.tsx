@@ -17,6 +17,7 @@ interface FaceOverlayProps {
   confidence: number;
   isProcessing: boolean;
   detected: boolean;
+  userName?: string;
 }
 
 export const FaceOverlay: React.FC<FaceOverlayProps> = ({
@@ -25,6 +26,7 @@ export const FaceOverlay: React.FC<FaceOverlayProps> = ({
   confidence,
   isProcessing,
   detected,
+  userName,
 }) => {
   if (!detected || !box) {
     return (
@@ -62,10 +64,11 @@ export const FaceOverlay: React.FC<FaceOverlayProps> = ({
 
         {/* Emotion Floating Tag */}
         <div className="absolute -top-7 left-0 bg-yellow-400 text-black text-[11px] font-bold px-2 py-0.5 rounded shadow flex items-center gap-1 uppercase tracking-wider whitespace-nowrap">
-          <span>{emotion}</span>
+          <span>{userName ? `${userName}: ` : ""}{emotion}</span>
           <span className="opacity-75">({Math.round(confidence * 100)}%)</span>
         </div>
       </div>
     </div>
   );
 };
+
